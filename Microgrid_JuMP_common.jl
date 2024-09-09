@@ -10,6 +10,7 @@ println("- g_tan")
 println("- cons_Xann_usage!")
 println("- build_optim_mg_stage!")
 println("- setup_optim_mg_jump")
+println("- diagnostics_mg_jump")
 println("- optim_mg_jump")
 
 """Capital recovery factor for discount rate `i` and duration `T`
@@ -219,7 +220,7 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
 
     ### Costs
     # Generator costs
-    Egen = sum(Pgen)*dt * 365/ndays # Generator yearly energy
+    md["Egen"] = Egen = sum(Pgen)*dt * 365/ndays # Generator yearly energy
 
     if fixed_lifetimes
         print("Fixed generator lifetime hypothesis: ")
@@ -240,21 +241,21 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
         mg.generator.om_price_hours * gen_hours * power_rated_gen :
         mg.generator.om_price_hours * relax_gain * Egen
 
-    Cgen = mg.generator.investment_price * Pgen_rated_ann +
-           Cgen_om +
-           mg.generator.fuel_price * mg.generator.fuel_slope * Egen;# $/y
+    md["Cgen_fuel"] = Cgen_fuel = mg.generator.fuel_price * mg.generator.fuel_slope * Egen;# $/y
+    md["Cgen"] = Cgen = mg.generator.investment_price * Pgen_rated_ann +
+                        Cgen_om + Cgen_fuel # $/y
     
     # Battery costs
     md["Esto_rated_ann"] = @variable(model, Esto_rated_ann >= 0) # annualized size
-    Csto = mg.storage.investment_price * Esto_rated_ann +
-           mg.storage.om_price * energy_rated_sto
+    md["Csto"] = Csto = mg.storage.investment_price * Esto_rated_ann +
+                        mg.storage.om_price * energy_rated_sto
     # A) Effect of calendar lifetime:
     CRFsto_cal = CRFproj(mg.storage.lifetime_calendar)
     @constraint(model, Esto_rated_ann >= energy_rated_sto*CRFsto_cal)
     # B) Effect of cycling
     if ~fixed_lifetimes
         md["Usto"] = @variable(model, Usto >= 0) # cumulated usage
-        E_through_sto = (sum(Psto_cha) + sum(Psto_dis))*dt * 365/ndays # cumulated throughput
+        md["E_through_sto"] = E_through_sto = (sum(Psto_cha) + sum(Psto_dis))*dt * 365/ndays # cumulated throughput
         @constraint(model, Usto == E_through_sto/(2*mg.storage.lifetime_cycles))
         cpwl_sto = cons_Xann_usage!(model,
             Esto_rated_ann, energy_rated_sto, Usto,
@@ -263,16 +264,14 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
 
     # Wind and solar costs
     pv = mg.nondispatchables[1]
-    Cpv = pv.investment_price * power_rated_pv * CRFproj(pv.lifetime) + 
-          pv.om_price * power_rated_pv
+    md["Cpv"] = Cpv = pv.investment_price * power_rated_pv * CRFproj(pv.lifetime) + 
+                      pv.om_price * power_rated_pv
     wind = mg.nondispatchables[2]
-    Cwind = wind.investment_price * power_rated_wind * CRFproj(wind.lifetime) + 
-        wind.om_price * power_rated_wind
+    md["Cwind"] = Cwind = wind.investment_price * power_rated_wind * CRFproj(wind.lifetime) + 
+                          wind.om_price * power_rated_wind
 
     # Total cost
-    Cann = Cgen + Csto +  Cpv + Cwind
-
-    md["Cann"] = Cann
+    md["Cann"] = Cann = Cgen + Csto +  Cpv + Cwind
     md["LCOE"] = Cann/Eload_desired
 
     # Unregister all variables
@@ -328,6 +327,64 @@ function setup_optim_mg_jump(optimizer;
     return mg, model_data
 end
 
+"""Diagnostics about microgrid optimization with JuMP
+
+About operation stats and economic performance, for generator and storage.
+e.g. lifetime and CRF (including the effect of annualized sized pwl approximation),
+
+Returns a hierarchical NamedTuple
+"""
+function diagnostics_mg_jump(mg, model_data, ndays, relax_gain)
+    md = model_data
+    dt = mg.project.timestep
+    Eload_desired = md["Eload_desired"]
+    CRFproj(T) = CRF(mg.project.discount_rate, T)
+    # Generator diagnostics
+    Pgen = value.(md["Pgen"])
+    Egen = value(md["Egen"])
+    power_rated_gen = value(md["power_rated_gen"])
+    # operation hours/y
+    gen_hours = sum(Pgen .> 1e-3*power_rated_gen)*dt*365/ndays
+    gen_hours_lin = relax_gain*Egen/power_rated_gen
+    gen_lifetime = mg.generator.lifetime_hours / gen_hours
+    gen_lifetime_hlin = mg.generator.lifetime_hours / gen_hours_lin
+    @assert isapprox(gen_lifetime_hlin, power_rated_gen/value(md["Ugen"]); rtol=1e-8)
+    # Storage diagnostics
+    energy_rated_sto = value(md["energy_rated_sto"])
+    E_through_sto = value(md["E_through_sto"])
+    sto_cycles = value(E_through_sto/(2*energy_rated_sto)) # c/year
+    sto_lifetime_cycles = mg.storage.lifetime_cycles / sto_cycles
+    @assert isapprox(sto_lifetime_cycles, energy_rated_sto/value(md["Usto"]); rtol=1e-8)
+    sto_lifetime = min(sto_lifetime_cycles, mg.storage.lifetime_calendar)
+
+    diagnostics = (
+        generator = (
+            cost_share = value(md["Cgen"]/md["Cann"]),
+            cost_share_fuel = value(md["Cgen_fuel"]/md["Cann"]),
+            energy = Egen,
+            load_share = Egen/Eload_desired,
+            hours = gen_hours,
+            hours_lin = gen_hours_lin,
+            lifetime = gen_lifetime,
+            lifetime_hlin = gen_lifetime_hlin,
+            CRF = CRFproj(gen_lifetime),
+            CRF_hlin = CRFproj(gen_lifetime_hlin),
+            CRF_hlin_pwm = value(md["Pgen_rated_ann"] / power_rated_gen)
+        ),
+        storage = (
+            cost_share = value(md["Csto"]/md["Cann"]),
+            energy_through = E_through_sto,
+            load_share = 0.5*E_through_sto/Eload_desired,
+            cycles = sto_cycles,
+            lifetime_cycles = sto_lifetime_cycles,
+            lifetime = sto_lifetime,
+            CRF = CRFproj(sto_lifetime),
+            CRF_pwm = value(md["Esto_rated_ann"]/energy_rated_sto)
+        )
+    )
+    return diagnostics
+end
+
 """Optimize sizing of microgrid using JuMP
 
 and extract results
@@ -339,8 +396,6 @@ and extract results
 Extra optional parameter:
 - `model_custom`: a function taking `model_data` as argument, 
   which can modify the model before its optimization
-
-TODO: split out diagnostics
 
 Returns:
 xopt, LCOE_opt, diagnostics, traj, model_data
@@ -381,32 +436,8 @@ function optim_mg_jump(optimizer;
         md["power_rated_pv"]
         md["power_rated_wind"]
     ])
-    
-    Tgen = value(md["power_rated_gen"]/md["Ugen"])
-    CRFgen_relax = value(md["Pgen_rated_ann"]/md["power_rated_gen"])
-    Tcyc = value(md["energy_rated_sto"]/md["Usto"])
-    Tsto = min(Tcyc, mg_base.storage.lifetime_calendar)
-    CRFsto_relax = value(md["Esto_rated_ann"]/md["energy_rated_sto"])
 
-    # Diagnostics about annualized sized relaxation
-    # i.e. PWL approx of CRF
-    CRFproj(T) = CRF(mg_base.project.discount_rate, T)
-
-    diagnostics = (
-        # Generator
-        Ugen = value(md["Ugen"]),
-        Tgen = Tgen,
-        CRFgen = CRFproj(Tgen),
-        CRFgen_relax = CRFgen_relax,
-        CRFgen_relax_rel = CRFgen_relax/CRFproj(Tgen),
-        # Storage
-        Usto = value(md["Usto"]),
-        Tcyc = Tcyc,
-        Tsto = Tsto,
-        CRFsto = CRFproj(Tsto),
-        CRFsto_relax = CRFsto_relax,
-        CRFsto_relax_rel = CRFsto_relax/CRFproj(Tsto)
-    )
+    diagnostics = diagnostics_mg_jump(mg_base, model_data, ndays, relax_gain)
 
     traj = (
         Pgen = value.(md["Pgen"]),
