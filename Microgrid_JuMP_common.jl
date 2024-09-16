@@ -220,16 +220,16 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
 
     ### Costs
     # Generator costs
+    md["Pgen_rated_ann"] = @variable(model, Pgen_rated_ann >= 0) # annualized size
     md["Egen"] = Egen = sum(Pgen)*dt * 365/ndays # Generator yearly energy
 
     if fixed_lifetimes
         print("Fixed generator lifetime hypothesis: ")
         gen_lifetime = mg.generator.lifetime_hours / gen_hours_assum # years
         println("$gen_lifetime y, assuming $gen_hours_assum  h/y of usage")
-        Pgen_rated_ann = power_rated_gen * CRFproj(gen_lifetime)
+        @constraint(model, Pgen_rated_ann == power_rated_gen * CRFproj(gen_lifetime))
     else
         println("Usage-dependent generator lifetime model (relax_gain=", relax_gain,")")
-        md["Pgen_rated_ann"] = @variable(model, Pgen_rated_ann >= 0) # annualized size
         md["Ugen"] = @variable(model, Ugen >= 0) # cumulated usage
         println("Xann constraints with z_tan=$z_tan")
         @constraint(model, Ugen == Egen*relax_gain/mg.generator.lifetime_hours); # kW/y
@@ -247,6 +247,7 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
     
     # Battery costs
     md["Esto_rated_ann"] = @variable(model, Esto_rated_ann >= 0) # annualized size
+    md["E_through_sto"] = E_through_sto = (sum(Psto_cha) + sum(Psto_dis))*dt * 365/ndays # cumulated throughput
     md["Csto"] = Csto = mg.storage.investment_price * Esto_rated_ann +
                         mg.storage.om_price * energy_rated_sto
     # A) Effect of calendar lifetime:
@@ -255,7 +256,6 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
     # B) Effect of cycling
     if ~fixed_lifetimes
         md["Usto"] = @variable(model, Usto >= 0) # cumulated usage
-        md["E_through_sto"] = E_through_sto = (sum(Psto_cha) + sum(Psto_dis))*dt * 365/ndays # cumulated throughput
         @constraint(model, Usto == E_through_sto/(2*mg.storage.lifetime_cycles))
         cpwl_sto = cons_Xann_usage!(model,
             Esto_rated_ann, energy_rated_sto, Usto,
@@ -348,13 +348,17 @@ function diagnostics_mg_jump(mg, model_data, ndays, relax_gain)
     gen_hours_lin = relax_gain*Egen/power_rated_gen
     gen_lifetime = mg.generator.lifetime_hours / gen_hours
     gen_lifetime_hlin = mg.generator.lifetime_hours / gen_hours_lin
-    @assert isapprox(gen_lifetime_hlin, power_rated_gen/value(md["Ugen"]); rtol=1e-8)
+    if "Ugen" in keys(md)
+        @assert isapprox(gen_lifetime_hlin, power_rated_gen/value(md["Ugen"]); rtol=1e-8)
+    end
     # Storage diagnostics
     energy_rated_sto = value(md["energy_rated_sto"])
     E_through_sto = value(md["E_through_sto"])
     sto_cycles = value(E_through_sto/(2*energy_rated_sto)) # c/year
     sto_lifetime_cycles = mg.storage.lifetime_cycles / sto_cycles
-    @assert isapprox(sto_lifetime_cycles, energy_rated_sto/value(md["Usto"]); rtol=1e-8)
+    if "Usto" in keys(md)
+        @assert isapprox(sto_lifetime_cycles, energy_rated_sto/value(md["Usto"]); rtol=1e-8)
+    end
     sto_lifetime = min(sto_lifetime_cycles, mg.storage.lifetime_calendar)
 
     diagnostics = (
