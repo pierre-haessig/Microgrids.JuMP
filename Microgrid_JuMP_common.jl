@@ -237,8 +237,10 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
             Pgen_rated_ann, power_rated_gen, Ugen,
             discount_rate, z_tan)
     end
+    # question for O&M wit fixed lifetime: use assumed fixed gen hours ?
+    # or use the convexified hours (Egen*relax_gain) like for Ugen?
     Cgen_om = fixed_lifetimes ?
-        mg.generator.om_price_hours * gen_hours * power_rated_gen :
+        mg.generator.om_price_hours * gen_hours_assum * power_rated_gen :
         mg.generator.om_price_hours * relax_gain * Egen
 
     md["Cgen_fuel"] = Cgen_fuel = mg.generator.fuel_price * mg.generator.fuel_slope * Egen;# $/y
@@ -373,7 +375,7 @@ function diagnostics_mg_jump(mg, model_data, ndays, relax_gain)
             lifetime_hlin = gen_lifetime_hlin,
             CRF = CRFproj(gen_lifetime),
             CRF_hlin = CRFproj(gen_lifetime_hlin),
-            CRF_hlin_pwm = value(md["Pgen_rated_ann"] / power_rated_gen)
+            CRF_hlin_pwl = value(md["Pgen_rated_ann"] / power_rated_gen)
         ),
         storage = (
             cost_share = value(md["Csto"]/md["Cann"]),
@@ -383,7 +385,7 @@ function diagnostics_mg_jump(mg, model_data, ndays, relax_gain)
             lifetime_cycles = sto_lifetime_cycles,
             lifetime = sto_lifetime,
             CRF = CRFproj(sto_lifetime),
-            CRF_pwm = value(md["Esto_rated_ann"]/energy_rated_sto)
+            CRF_pwl = value(md["Esto_rated_ann"]/energy_rated_sto)
         )
     )
     return diagnostics
