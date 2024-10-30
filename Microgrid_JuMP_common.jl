@@ -426,7 +426,7 @@ function optim_mg_jump(optimizer;
 
     # Optional model customization
     if model_custom !== nothing
-        model_custom(model_data)
+        model_custom(model_data, mg_base)
     end
     
     # Run optimization
