@@ -46,9 +46,9 @@ function ts_reduction(x, ndays, sr=24)
     return out
 end
 
-"""intercept and slope of tangent to function g:z → 1/(1-e^(-1/z))  at point `z0`
+"""intercept and slope of tangent to function g:z → 1/(1-e^(-1/z)) at point `z0>0`
 
-Usage: with gi, g1 = g_asym(z0),
+Usage: with gi, g1 = g_tan(z0),
 then g(z) ~ gi + g1*z around z0
 gi: intercept at z=0
 g1: slope
@@ -103,7 +103,7 @@ thus the use of the `model_data` Dict.
 
 # Parameters:
 - `mg`: base Microgrid description (with 1kW(h) ratings) for e.g. price parameters and load data
-- `model_data`::Dict to store variable references and constraints. 
+- `model_data`::Dict to store variable references and constraints.
   - a JuMP `Model` should be included in `model_data["model"]`
 
 Optional keyword parameters:
@@ -134,7 +134,7 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
     println("Building stage problem with $ndays days...")
     dt = mg.project.timestep
     discount_rate = mg.project.discount_rate
-    CRFproj(T) = CRF(mg.project.discount_rate, T) 
+    CRFproj(T) = CRF(mg.project.discount_rate, T)
 
     K = ndays*24 # h
     ts_reduction_ndays(x) = ts_reduction(x, ndays)
@@ -159,7 +159,7 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
     md["power_rated_wind"] = @variable(model, 0 <= power_rated_wind <= power_rated_gen_max)
 
     ## Power flows for each component
-    
+
     # Non dispatchable sources (renewables)
     md["pv_potential"] = @variable(model, pv_potential[1:K])
     @constraint(model, pv_potential .== power_rated_pv*cf_pv)
@@ -174,7 +174,7 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
     # Renewables spillage and load shedding
     md["Pspill"] = @variable(model, Pspill[1:K] >= 0)
     md["Pshed"]  = @variable(model, Pshed[1:K] >= 0)
-    
+
     # Dispatchable generator
     md["Pgen"] = @variable(model, Pgen[1:K] >= 0)
     @constraint(model, Pgen .<= power_rated_gen)
@@ -203,12 +203,12 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
     @constraint(model, Esto[K+1] == Esto[1])
     # not implemented: force initial SoC # TODO: activate to make it comparable with BB
     #@constraint(model, Esto[1] == mg.storage.SoC_ini * energy_rated_sto)
-    
+
     ## Power balance
     md["balance"] = @constraint(model, balance,
         Pgen + (Psto_dis - Psto_cha) - Pspill .== Pnl - Pshed,
     )
-    
+
     if shed_max == 0.0
         println("zero load shedding allowed")
         fix.(Pshed, 0.0; force=true);
@@ -236,15 +236,15 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
         cpwl_gen = cons_Xann_usage!(model,
             Pgen_rated_ann, power_rated_gen, Ugen,
             discount_rate, z_tan)
-    end   
-    Cgen_om = fixed_lifetimes ? 
+    end
+    Cgen_om = fixed_lifetimes ?
         mg.generator.om_price_hours * gen_hours * power_rated_gen :
         mg.generator.om_price_hours * relax_gain * Egen
 
     md["Cgen_fuel"] = Cgen_fuel = mg.generator.fuel_price * mg.generator.fuel_slope * Egen;# $/y
     md["Cgen"] = Cgen = mg.generator.investment_price * Pgen_rated_ann +
                         Cgen_om + Cgen_fuel # $/y
-    
+
     # Battery costs
     md["Esto_rated_ann"] = @variable(model, Esto_rated_ann >= 0) # annualized size
     md["E_through_sto"] = E_through_sto = (sum(Psto_cha) + sum(Psto_dis))*dt * 365/ndays # cumulated throughput
@@ -264,10 +264,10 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
 
     # Wind and solar costs
     pv = mg.nondispatchables[1]
-    md["Cpv"] = Cpv = pv.investment_price * power_rated_pv * CRFproj(pv.lifetime) + 
+    md["Cpv"] = Cpv = pv.investment_price * power_rated_pv * CRFproj(pv.lifetime) +
                       pv.om_price * power_rated_pv
     wind = mg.nondispatchables[2]
-    md["Cwind"] = Cwind = wind.investment_price * power_rated_wind * CRFproj(wind.lifetime) + 
+    md["Cwind"] = Cwind = wind.investment_price * power_rated_wind * CRFproj(wind.lifetime) +
                           wind.om_price * power_rated_wind
 
     # Total cost
@@ -303,10 +303,10 @@ function setup_optim_mg_jump(optimizer;
         relax_gain = 1.0,
         z_tan = [0.20, 0.28, 0.37, 0.50, 0.68, 1.0, 1.7, 4.0],
         create_mg_base=create_mg_base)
-    
+
     # base Microgrid with 1kW(h) ratings
     mg = create_microgrid([1., 1., 1., 1.]; create_mg_base)
-    
+
     model_data = Dict{String,Any}()
 
     # JuMP model setup
@@ -398,7 +398,7 @@ and extract results
 - optional keyword parameters of the `setup_optim_mg_jump` function
 
 Extra optional parameter:
-- `model_custom`: a function taking `model_data` as argument, 
+- `model_custom`: a function taking `model_data` and `mg_base` as arguments,
   which can modify the model before its optimization
 
 Returns:
@@ -428,7 +428,7 @@ function optim_mg_jump(optimizer;
     if model_custom !== nothing
         model_custom(model_data, mg_base)
     end
-    
+
     # Run optimization
     @time JuMP.optimize!(model)
 
