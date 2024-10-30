@@ -1,5 +1,5 @@
 # Common code for Microgrid definition, simulation and optimization
-# Pierre Haessig, September 2024
+# Pierre Haessig, September-October 2024
 # This is a script and function-wrapped version of the code developped in Microgrid_optimization_JuMP.ipynb
 # which is then reused in other notebooks
 
@@ -12,6 +12,7 @@ println("- build_optim_mg_stage!")
 println("- setup_optim_mg_jump")
 println("- diagnostics_mg_jump")
 println("- optim_mg_jump")
+println("- simulate_alg")
 
 """Capital recovery factor for discount rate `i` and duration `T`
 CRF is such that Cann = NPC*CRF
@@ -346,7 +347,7 @@ function diagnostics_mg_jump(mg, model_data, ndays, relax_gain)
     Egen = value(md["Egen"])
     power_rated_gen = value(md["power_rated_gen"])
     # operation hours/y
-    gen_hours = sum(Pgen .> 1e-3*power_rated_gen)*dt*365/ndays
+    gen_hours = sum(Pgen .> 1e-6*power_rated_gen)*dt*365/ndays
     gen_hours_lin = relax_gain*Egen/power_rated_gen
     gen_lifetime = mg.generator.lifetime_hours / gen_hours
     gen_lifetime_hlin = mg.generator.lifetime_hours / gen_hours_lin
@@ -418,7 +419,7 @@ function optim_mg_jump(optimizer;
     )
 
     # Setup optimization model
-    mg_base, model_data = setup_optim_mg_jump(optimizer;
+    mg, model_data = setup_optim_mg_jump(optimizer;
         shed_max, ndays, fixed_lifetimes, gen_hours_assum, relax_gain, z_tan,
         create_mg_base
     )
@@ -428,7 +429,7 @@ function optim_mg_jump(optimizer;
 
     # Optional model customization
     if model_custom !== nothing
-        model_custom(model_data, mg_base)
+        model_custom(model_data, mg)
     end
 
     # Run optimization
@@ -443,7 +444,13 @@ function optim_mg_jump(optimizer;
         md["power_rated_wind"]
     ])
 
-    diagnostics = diagnostics_mg_jump(mg_base, model_data, ndays, relax_gain)
+    # Paste back sizing in Microgrid project description
+    mg.generator.power_rated = value(md["power_rated_gen"])
+    mg.storage.energy_rated = value(md["energy_rated_sto"])
+    mg.nondispatchables[1].power_rated = value(md["power_rated_pv"])
+    mg.nondispatchables[2].power_rated = value(md["power_rated_wind"])
+
+    diagnostics = diagnostics_mg_jump(mg, model_data, ndays, relax_gain)
 
     traj = (
         Pgen = value.(md["Pgen"]),
@@ -451,5 +458,39 @@ function optim_mg_jump(optimizer;
         Esto = value.(md["Esto"]),
         Pshed = value.(md["Pshed"])
     )
-    return xopt, LCOE_opt, diagnostics, traj, md
+    return xopt, LCOE_opt, diagnostics, traj, md, mg
+end
+
+"""
+    simulate_alg(mg::Microgrid, md, smoothing::Smoothing=NoSmoothing)
+
+simulate solution of Algebraic model (stored as JuMP variables in `model_data`)
+using Microgrids's  simulator.
+
+To get comparable results, `smoothing=Smoothing(transition=1.0, gain=relax_gain)`
+should be used.
+
+This replicates `Microgrids.simulate`, except that the `operation` step is bypassed.
+"""
+function simulate_alg(mg::Microgrid, md, smoothing::Smoothing=NoSmoothing)
+    # Collect microgrid operation trajectories
+    Pnl = value.(md["Pnl"])
+    Pshed = value.(md["Pshed"])
+    renew_potential = value.(md["renew_potential"])
+    Pgen = value.(md["Pgen"])
+    Esto = value.(md["Esto"])
+    Psto = value.(md["Psto_dis"] - md["Psto_cha"])
+    Pspill = value.(md["Pspill"])
+    Psto_dmax = zero(Psto)
+    Psto_cmax = zero(Psto)
+
+    oper_traj = OperationTraj(Pnl, Pshed, renew_potential, Pgen, Esto, Psto, Psto_dmax, Psto_cmax, Pspill)
+
+    # Aggregate the operation variables
+    oper_stats = aggregation(mg, oper_traj, smoothing)
+
+    # Eval the microgrid costs
+    mg_costs = economics(mg, oper_stats)
+
+    return (traj=oper_traj, stats=oper_stats, costs=mg_costs)
 end
