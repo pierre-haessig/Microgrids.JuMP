@@ -3,6 +3,9 @@
 # This is a script and function-wrapped version of the code developped in Microgrid_optimization_JuMP.ipynb
 # which is then reused in other notebooks
 
+using Microgrids
+using JuMP
+
 println("Microgrid optimization with JuMP common functions:")
 println("- CRF")
 println("- ts_reduction")
@@ -97,7 +100,10 @@ function cons_Xann_usage!(model, Xann, X, U, discount_rate, z_tan=[0.28, 0.5, 1.
     return cvec
 end
 
-"""Build one stage of microgrid sizing optimization JuMP model
+"""
+    build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any})
+
+Build one stage of microgrid sizing optimization JuMP model
 
 All named variables and constraints are unregistered from the JuMP model,
 thus the use of the `model_data` Dict.
@@ -106,17 +112,10 @@ thus the use of the `model_data` Dict.
 - `mg`: base Microgrid description (with 1kW(h) ratings) for e.g. price parameters and load data
 - `model_data`::Dict to store variable references and constraints.
   - a JuMP `Model` should be included in `model_data["model"]`
+  - it should also contain the following model parameters (see `setup_optim_mg_jump`):
+    `shed_max`, `ndays`, `fixed_lifetimes`, `gen_hours_assum`, `relax_gain` and `z_tan`
 
-Optional keyword parameters:
-- `shed_max`: load shedding bound, as a fraction of cumulated desired load energy, in [0,1]
-- `ndays=365`: data reduction
-- `fixed_lifetimes`: true or false (default)
-- `gen_hours_assum`: assumed generator operation hours when fixed_lifetimes, in 0 – 8760 h/y (default 3000)
-- `relax_gain`: 1.0 by default. Increase to try to compensation the underestimation
-  of e.g. generator operating hours due to linearization.
-- `z_tan`: tangent points for Xann PWL approx, see `cons_Xann_usage!` function
-
-Sizing maximum bounds are taken as global variables:
+⚠ Sizing maximum bounds are taken as global variables:
 - `power_rated_gen_max`
 - `energy_rated_sto_max`
 - `power_rated_pv_max`
@@ -124,14 +123,17 @@ Sizing maximum bounds are taken as global variables:
 
 Also, a global `ts_reduction(x, ndays)` function is needed.
 """
-function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
-        shed_max = 0.0,
-        ndays = 365,
-        fixed_lifetimes = false,
-        gen_hours_assum = 3000.,
-        relax_gain = 1.0,
-        z_tan = [0.20, 0.28, 0.37, 0.50, 0.68, 1.0, 1.7, 4.0]
-    )
+function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any})
+    # Retrieve model parameters from the Dict:
+    md = model_data # shortcut Dict name
+
+    shed_max = md["shed_max"]
+    ndays = md["ndays"]
+    fixed_lifetimes = md["fixed_lifetimes"]
+    gen_hours_assum = md["gen_hours_assum"]
+    relax_gain = md["relax_gain"]
+    z_tan = md["z_tan"]
+
     println("Building stage problem with $ndays days...")
     dt = mg.project.timestep
     discount_rate = mg.project.discount_rate
@@ -142,16 +144,16 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
 
     Pload = mg.load |> ts_reduction_ndays
     Eload_desired = sum(Pload)*dt*365/ndays
-    model_data["Pload"] = Pload
-    model_data["Eload_desired"] = Eload_desired
+    md["Pload"] = Pload
+    md["Eload_desired"] = Eload_desired
 
     # (works because the rated power in mg are set to 1 kW)
     cf_pv   = production(mg.nondispatchables[1]) |> ts_reduction_ndays
-    cf_wind = production(mg.nondispatchables[2]) |> ts_reduction_ndays;
+    cf_wind = production(mg.nondispatchables[2]) |> ts_reduction_ndays
 
     ### JuMP model definition
-    model = model_data["model"] # JuMP model
-    md = model_data # short name
+    model = md["model"] # JuMP model
+
 
     ##  Sizing variables
     md["power_rated_gen"]  = @variable(model, 0 <= power_rated_gen  <= power_rated_gen_max)
@@ -228,7 +230,8 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
         print("Fixed generator lifetime hypothesis: ")
         gen_lifetime = mg.generator.lifetime_hours / gen_hours_assum # years
         println("$gen_lifetime y, assuming $gen_hours_assum  h/y of usage")
-        @constraint(model, Pgen_rated_ann == power_rated_gen * CRFproj(gen_lifetime))
+        md["cons_Pgen_rated_ann_CRFgen_lifetime"] = @constraint(model,
+            Pgen_rated_ann == power_rated_gen * CRFproj(gen_lifetime))
     else
         println("Usage-dependent generator lifetime model (relax_gain=", relax_gain,")")
         md["Ugen"] = @variable(model, Ugen >= 0) # cumulated usage
@@ -240,7 +243,7 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
     end
     # question for O&M wit fixed lifetime: use assumed fixed gen hours ?
     # or use the convexified hours (Egen*relax_gain) like for Ugen?
-    Cgen_om = fixed_lifetimes ?
+    md["Cgen_om"] = Cgen_om = fixed_lifetimes ?
         mg.generator.om_price_hours * gen_hours_assum * power_rated_gen :
         mg.generator.om_price_hours * relax_gain * Egen
 
@@ -255,7 +258,8 @@ function build_optim_mg_stage!(mg, model_data::Dict{String,Any};
                         mg.storage.om_price * energy_rated_sto
     # A) Effect of calendar lifetime:
     CRFsto_cal = CRFproj(mg.storage.lifetime_calendar)
-    @constraint(model, Esto_rated_ann >= energy_rated_sto*CRFsto_cal)
+    md["cons_Esto_rated_ann_CRFsto_cal"] = @constraint(model,
+        Esto_rated_ann >= energy_rated_sto*CRFsto_cal)
     # B) Effect of cycling
     if ~fixed_lifetimes
         md["Usto"] = @variable(model, Usto >= 0) # cumulated usage
@@ -290,22 +294,36 @@ end
 # Parameters:
 - `optimizer`: JuMP compatible optimization solver
 
+Keyword parameter:
+- `create_mg_base` function returning a `Microgrid` project description
+  (e.g. for load, components price and lifetime)
+
 Optional keyword parameters:
-- parameters of the `build_optim_mg_stage!` function
-- `create_mg_base` function to define the base microgrid parameters
+- `shed_max`: load shedding upper bound, as a fraction of desired load energy, in [0,1] (default to 0.0)
+- `ndays`: time series reduction (default to 365: no data reducation)
+- `fixed_lifetimes`: true or false (default)
+- `gen_hours_assum`: assumed generator operation hours when `fixed_lifetimes` is `true`,
+   in 0 – 8760 h/y (default 2000 h/y)
+- `relax_gain`: 1.0 by default. Increase to try to compensation the underestimation
+  of e.g. generator operating hours due to linearization.
+- `z_tan`: tangent points for Xann PWL approx, see `cons_Xann_usage!` function
+
+(all these parameters gets stored in the `model_data` output Dict)
+
+⚠ a global `create_microgrid(x; create_mg_base)` function is needed. TO BE REMOVED.
 
 Create a JuMP model, populates it with `build_optim_mg_stage!` and returns:
 - mg: base microgrid
 - model_data Dict, with optimization variables and named constraints
 """
-function setup_optim_mg_jump(optimizer;
+function setup_optim_mg_jump(optimizer; create_mg_base,
         shed_max=0.0,
         ndays=365,
         fixed_lifetimes=false,
-        gen_hours_assum = 3000.,
+        gen_hours_assum = 2000.,
         relax_gain = 1.0,
         z_tan = [0.20, 0.28, 0.37, 0.50, 0.68, 1.0, 1.7, 4.0],
-        create_mg_base=create_mg_base)
+    )
 
     # base Microgrid with 1kW(h) ratings
     mg = create_microgrid([1., 1., 1., 1.]; create_mg_base)
@@ -317,12 +335,16 @@ function setup_optim_mg_jump(optimizer;
     set_silent(model)
     model_data["model"] = model
 
+    # Store model parameters in the Dict:
+    model_data["shed_max"] = shed_max
+    model_data["ndays"] = ndays
+    model_data["fixed_lifetimes"] = fixed_lifetimes
+    model_data["gen_hours_assum"] = gen_hours_assum
+    model_data["relax_gain"] = relax_gain
+    model_data["z_tan"] = z_tan
+
     # Populate the model
-    build_optim_mg_stage!(
-        mg, model_data;
-        shed_max, ndays, fixed_lifetimes, gen_hours_assum,
-        relax_gain, z_tan
-    )
+    build_optim_mg_stage!(mg, model_data)
 
     # Set optimization objective
     @objective(model, Min, model_data["Cann"])
@@ -398,23 +420,26 @@ and extract results
 
 # Parameters
 - `optimizer`: JuMP compatible optimization solver
-- optional keyword parameters of the `setup_optim_mg_jump` function
 
-Extra optional parameter:
+Keyword parameter:
+- `create_mg_base` function returning a `Microgrid` project description
+  (e.g. for load, components price and lifetime)
+
+Optional keyword parameter:
+- optional keyword parameters of the `setup_optim_mg_jump` function
 - `model_custom`: a function taking `model_data` and `mg_base` as arguments,
   which can modify the model before its optimization
 
 Returns:
 xopt, LCOE_opt, diagnostics, traj, model_data
 """
-function optim_mg_jump(optimizer;
+function optim_mg_jump(optimizer; create_mg_base,
         shed_max=0.0,
         ndays=365,
         fixed_lifetimes=false,
-        gen_hours_assum = 3000.,
+        gen_hours_assum = 2000.,
         relax_gain = 1.0,
         z_tan = [0.20, 0.28, 0.37, 0.50, 0.68, 1.0, 1.7, 4.0],
-        create_mg_base=create_mg_base,
         model_custom=nothing
     )
 
