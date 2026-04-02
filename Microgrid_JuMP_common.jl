@@ -5,6 +5,10 @@
 
 using Microgrids
 using JuMP
+using HiGHS
+
+include("C:/Users/FR00CSS0000000077985/Documents/Centrale_Supelec/Projet_recherche/Microgrids.JuMP/example/Microgrid_model_data.jl")
+const tseries = load_microgrid_tseries()
 
 println("Microgrid optimization with JuMP common functions:")
 println("- CRF")
@@ -16,6 +20,114 @@ println("- setup_optim_mg_jump")
 println("- diagnostics_mg_jump")
 println("- optim_mg_jump")
 println("- simulate_alg")
+println("- Q_hydro_overtime")
+
+optimizer = HiGHS.Optimizer
+mg = create_mg_base()
+
+Pload_max = maximum(tseries.Pload) # kW
+Pload = tseries.Pload
+power_rated_gen_max = 0
+power_rated_fc_max = 1.2 * Pload_max
+power_rated_ele_max = 1.2* Pload_max
+power_rated_hb_max = 0
+energy_rated_sto_max = 10.0 * Pload_max
+capacity_max = 0
+power_rated_pv_max = 1.0 * Pload_max
+power_rated_wind_max = 5.0 * Pload_max
+
+
+function create_microgrid(x; create_mg_base=create_mg_base)
+    mg = create_mg_base()
+
+    irr_raw = mg.nondispatchables[1].irradiance
+    irr_norm = irr_raw ./ maximum(irr_raw)
+
+    cf_raw = mg.nondispatchables[2].capacity_factor
+    cf_norm = cf_raw ./ maximum(cf_raw)
+
+    gen_new = ProductionUnit(0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, Inf, Inf, Inf, 1.0, 1.0, 1.0, "", "")
+
+    fuel_cell_new = ProductionUnit(x[1],
+        mg.dispatchables.fuel_cell[1].consumption_intercept,
+        mg.dispatchables.fuel_cell[1].consumption_slope,
+        mg.dispatchables.fuel_cell[1].combustible_price,
+        mg.dispatchables.fuel_cell[1].investment_price,
+        mg.dispatchables.fuel_cell[1].om_price_hourly,
+        mg.dispatchables.fuel_cell[1].om_price,
+        mg.dispatchables.fuel_cell[1].lifetime_calendar,
+        mg.dispatchables.fuel_cell[1].lifetime_hours,
+        mg.dispatchables.fuel_cell[1].lifetime_on_off,
+        mg.dispatchables.fuel_cell[1].minimum_load_ratio,
+        mg.dispatchables.fuel_cell[1].replacement_price_ratio,
+        mg.dispatchables.fuel_cell[1].salvage_price_ratio,
+        mg.dispatchables.fuel_cell[1].input_unit,
+        mg.dispatchables.fuel_cell[1].output_unit)
+
+    electrolyzer_new = ProductionUnit(x[2],
+        mg.electrolyzer[1].consumption_intercept,
+        mg.electrolyzer[1].consumption_slope,
+        mg.electrolyzer[1].combustible_price,
+        mg.electrolyzer[1].investment_price,
+        mg.electrolyzer[1].om_price_hourly,
+        mg.electrolyzer[1].om_price,
+        mg.electrolyzer[1].lifetime_calendar,
+        mg.electrolyzer[1].lifetime_hours,
+        mg.electrolyzer[1].lifetime_on_off,
+        mg.electrolyzer[1].minimum_load_ratio,
+        mg.electrolyzer[1].replacement_price_ratio,
+        mg.electrolyzer[1].salvage_price_ratio,
+        mg.electrolyzer[1].input_unit,
+        mg.electrolyzer[1].output_unit)
+
+    haber = ProductionUnit(0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, Inf, Inf, Inf, 1.0, 1.0, 1.0, "", "")
+
+    batt_new = Battery(x[3],
+        mg.storage.investment_price,
+        mg.storage.om_price,
+        mg.storage.lifetime_calendar,
+        mg.storage.lifetime_cycles,
+        mg.storage.charge_rate,
+        mg.storage.discharge_rate,
+        mg.storage.loss_factor,
+        mg.storage.SoC_min,
+        mg.storage.SoC_max,
+        mg.storage.SoC_ini,
+        mg.storage.replacement_price_ratio,
+        mg.storage.salvage_price_ratio)
+
+    tank_0 = Tank(0.0, 1.0, 1.0, Inf, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+
+    pv_new = Photovoltaic(x[4],
+        irr_norm,
+        mg.nondispatchables[1].investment_price,
+        mg.nondispatchables[1].om_price,
+        mg.nondispatchables[1].lifetime,
+        mg.nondispatchables[1].derating_factor,
+        mg.nondispatchables[1].replacement_price_ratio,
+        mg.nondispatchables[1].salvage_price_ratio)
+
+    windgen_new = WindPower(x[5],
+        cf_norm,
+        mg.nondispatchables[2].investment_price,
+        mg.nondispatchables[2].om_price,
+        mg.nondispatchables[2].lifetime,
+        mg.nondispatchables[2].replacement_price_ratio,
+        mg.nondispatchables[2].salvage_price_ratio)
+
+    mg_new = Microgrid(
+        mg.project,
+        tseries.Pload,
+        DispatchableCompound([fuel_cell_new, gen_new], [fuel_cell_new, gen_new]),
+        [electrolyzer_new],
+        haber,
+        TankCompound(tank_0, tank_0),
+        batt_new,
+        [pv_new, windgen_new]
+    )
+
+    return mg_new
+end
 
 """Capital recovery factor for discount rate `i` and duration `T`
 CRF is such that Cann = NPC*CRF
@@ -113,24 +225,24 @@ thus the use of the `model_data` Dict.
 - `model_data`::Dict to store variable references and constraints.
   - a JuMP `Model` should be included in `model_data["model"]`
   - it should also contain the following model parameters (see `setup_optim_mg_jump`):
-    `shed_max`, `ndays`, `fixed_lifetimes`, `gen_hours_assum`, `relax_gain` and `z_tan`
+    `shed_max`, `ndays`, `fixed_lifetimes`, `fc_hours_assum`, `relax_gain` and `z_tan`
 
 ⚠ Sizing maximum bounds are taken as global variables:
-- `power_rated_gen_max`
+- `power_rated_fc_max`
+- `power_rated_ele`
 - `energy_rated_sto_max`
 - `power_rated_pv_max`
 - `power_rated_wind_max`
 
 Also, a global `ts_reduction(x, ndays)` function is needed.
 """
-function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any})
+function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any}, H2_price = 0.0)
     # Retrieve model parameters from the Dict:
     md = model_data # shortcut Dict name
-
     shed_max = md["shed_max"]
     ndays = md["ndays"]
     fixed_lifetimes = md["fixed_lifetimes"]
-    gen_hours_assum = md["gen_hours_assum"]
+    fc_hours_assum = md["fc_hours_assum"]
     relax_gain = md["relax_gain"]
     z_tan = md["z_tan"]
 
@@ -148,18 +260,25 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any})
     md["Eload_desired"] = Eload_desired
 
     # (works because the rated power in mg are set to 1 kW)
-    cf_pv   = production(mg.nondispatchables[1]) |> ts_reduction_ndays
-    cf_wind = production(mg.nondispatchables[2]) |> ts_reduction_ndays
+    
+    raw_pv = production(mg.nondispatchables[1])
+    cf_pv = (raw_pv ./ maximum(raw_pv)) |> ts_reduction_ndays
+
+    raw_wind = production(mg.nondispatchables[2])
+    cf_wind = (raw_wind ./ maximum(raw_wind)) |> ts_reduction_ndays
 
     ### JuMP model definition
     model = md["model"] # JuMP model
 
 
     ##  Sizing variables
-    md["power_rated_gen"]  = @variable(model, 0 <= power_rated_gen  <= power_rated_gen_max)
+    md["power_rated_fc"]  = @variable(model, 0 <= power_rated_fc <= power_rated_fc_max)
+    md["power_rated_ele"] = @variable(model, 0 <= power_rated_ele <= power_rated_ele_max)
     md["energy_rated_sto"] = @variable(model, 0 <= energy_rated_sto <= energy_rated_sto_max)
-    md["power_rated_pv"]   = @variable(model, 0 <= power_rated_pv   <= power_rated_pv_max)
-    md["power_rated_wind"] = @variable(model, 0 <= power_rated_wind <= power_rated_gen_max)
+    md["power_rated_pv"]   = @variable(model, 0 <= power_rated_pv <= power_rated_pv_max)
+    md["power_rated_wind"] = @variable(model, 0 <= power_rated_wind <= power_rated_wind_max)
+
+
 
     ## Power flows for each component
 
@@ -178,10 +297,13 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any})
     md["Pspill"] = @variable(model, Pspill[1:K] >= 0)
     md["Pshed"]  = @variable(model, Pshed[1:K] >= 0)
 
-    # Dispatchable generator
-    md["Pgen"] = @variable(model, Pgen[1:K] >= 0)
-    @constraint(model, Pgen .<= power_rated_gen)
+    # Fuel_cells
+    md["Pfc"] = @variable(model, Pfc[1:K] >= 0)
+    @constraint(model, Pfc .<= power_rated_fc)
 
+    #Electrolyzer
+    md["Pele"] = @variable(model, Pele[1:K] >= 0)
+    @constraint(model, Pele .<= power_rated_ele)
     ## Energy storage
     # Charge and discharge power (net of losses)
     md["Psto_cha"] = @variable(model, Psto_cha[1:K] >= 0)
@@ -192,7 +314,7 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any})
     @constraint(model, Esto .>= mg.storage.SoC_min*energy_rated_sto) # often 0
     # Power constraints
     @constraint(model, Psto_cha .<= mg.storage.charge_rate    * energy_rated_sto) #
-    @constraint(model, Psto_dis .<= mg.storage.discharge_rate * energy_rated_sto) # double the solving time with HiGHS and MOI 1.30.0, when there is the Pgen penalty!!
+    @constraint(model, Psto_dis .<= mg.storage.discharge_rate * energy_rated_sto) # double the solving time with HiGHS and MOI 1.30.0, when there is the Pfc penalty!!
     # variant that embeds the two preceding ones, using that fact that Psto_cha(k) * Psto_dis(k) = 0
     @constraint(model, Psto_cha/mg.storage.charge_rate + Psto_dis/mg.storage.discharge_rate  .<=  energy_rated_sto)
     # Evolution of the State of Energy,
@@ -209,7 +331,7 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any})
 
     ## Power balance
     md["balance"] = @constraint(model, balance,
-        Pgen + (Psto_dis - Psto_cha) - Pspill .== Pnl - Pshed,
+        Pfc - Pele + (Psto_dis - Psto_cha) - Pspill .== Pnl - Pshed,
     )
 
     if shed_max == 0.0
@@ -222,35 +344,63 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any})
     end
 
     ### Costs
-    # Generator costs
-    md["Pgen_rated_ann"] = @variable(model, Pgen_rated_ann >= 0) # annualized size
-    md["Egen"] = Egen = sum(Pgen)*dt * 365/ndays # Generator yearly energy
+    # Fuel cell costs
+    md["Pfc_rated_ann"] = @variable(model, Pfc_rated_ann >= 0) # annualized size
+    md["Efc"] = Efc = sum(Pfc)*dt * 365/ndays # Generator yearly energy
 
     if fixed_lifetimes
-        print("Fixed generator lifetime hypothesis: ")
-        gen_lifetime = mg.generator.lifetime_hours / gen_hours_assum # years
-        println("$gen_lifetime y, assuming $gen_hours_assum  h/y of usage")
-        md["cons_Pgen_rated_ann_CRFgen_lifetime"] = @constraint(model,
-            Pgen_rated_ann == power_rated_gen * CRFproj(gen_lifetime))
+        print("Fixed fuel_cell lifetime hypothesis: ")
+        fc_lifetime = mg.dispatchables.fuel_cell[1].lifetime_hours / fc_hours_assum # years
+        println("$fc_lifetime y, assuming $fc_hours_assum  h/y of usage")
+        md["cons_Pfc_rated_ann_CRFfc_lifetime"] = @constraint(model,
+            Pfc_rated_ann == power_rated_fc * CRFproj(fc_lifetime))
     else
-        println("Usage-dependent generator lifetime model (relax_gain=", relax_gain,")")
-        md["Ugen"] = @variable(model, Ugen >= 0) # cumulated usage
+        println("Usage-dependent fuel_cell lifetime model (relax_gain=", relax_gain,")")
+        md["Ufc"] = @variable(model, Ufc >= 0) # cumulated usage
         println("Xann constraints with z_tan=$z_tan")
-        @constraint(model, Ugen == Egen*relax_gain/mg.generator.lifetime_hours); # kW/y
-        cpwl_gen = cons_Xann_usage!(model,
-            Pgen_rated_ann, power_rated_gen, Ugen,
+        @constraint(model, Ufc == Efc*relax_gain/mg.dispatchables.fuel_cell[1].lifetime_hours); # kW/y
+        cpwl_fc = cons_Xann_usage!(model,
+            Pfc_rated_ann, power_rated_fc, Ufc,
             discount_rate, z_tan)
     end
-    # question for O&M wit fixed lifetime: use assumed fixed gen hours ?
-    # or use the convexified hours (Egen*relax_gain) like for Ugen?
-    md["Cgen_om"] = Cgen_om = fixed_lifetimes ?
-        mg.generator.om_price_hours * gen_hours_assum * power_rated_gen :
-        mg.generator.om_price_hours * relax_gain * Egen
+    # question for O&M wit fixed lifetime: use assumed fixed fc hours ?
+    # or use the convexified hours (Efc*relax_gain) like for Ufc?
+    md["Cfc_om"] = Cfc_om = fixed_lifetimes ?
+        mg.dispatchables.fuel_cell[1].om_price_hourly * fc_hours_assum * power_rated_fc :
+        mg.dispatchables.fuel_cell[1].om_price_hourly * relax_gain * Efc
 
-    md["Cgen_fuel"] = Cgen_fuel = mg.generator.fuel_price * mg.generator.fuel_slope * Egen;# $/y
-    md["Cgen"] = Cgen = mg.generator.investment_price * Pgen_rated_ann +
-                        Cgen_om + Cgen_fuel # $/y
+    md["Cfc_combustible"] = Cfc_combustible = H2_price * mg.dispatchables.fuel_cell[1].consumption_slope * Efc;# $/y
+    md["Cfc"] = Cfc = mg.dispatchables.fuel_cell[1].investment_price * Pfc_rated_ann +
+                        Cfc_om + Cfc_combustible # $/y
 
+    # Electroolyzer costs
+    md["Pele_rated_ann"] = @variable(model, Pele_rated_ann >= 0) # annualized size
+    md["Eele"] = Eele = sum(Pele)*dt * 365/ndays # Generator yearly energy
+
+    if fixed_lifetimes
+        print("Fixed electrolyzer lifetime hypothesis: ")
+        ele_lifetime = mg.electrolyzer[1].lifetime_hours / ele_hours_assum # years
+        println("$ele_lifetime y, assuming $ele_hours_assum  h/y of usage")
+        md["cons_Pele_rated_ann_CRFele_lifetime"] = @constraint(model,
+            Pele_rated_ann == power_rated_ele * CRFproj(ele_lifetime))
+    else
+        println("Usage-dependent electrolyzer lifetime model (relax_gain=", relax_gain,")")
+        md["Uele"] = @variable(model, Uele >= 0) # cumulated usage
+        println("Xann constraints with z_tan=$z_tan")
+        @constraint(model, Uele == Eele*relax_gain/mg.electrolyzer[1].lifetime_hours); # kW/y
+        cpwl_ele = cons_Xann_usage!(model,
+            Pele_rated_ann, power_rated_ele, Uele,
+            discount_rate, z_tan)
+    end
+    # question for O&M wit fixed lifetime: use assumed fixed ele hours ?
+    # or use the convexified hours (Eele*relax_gain) like for Uele?
+    md["Cele_om"] = Cele_om = fixed_lifetimes ?
+        mg.electrolyzer[1].om_price_hourly * ele_hours_assum * power_rated_ele :
+        mg.electrolyzer[1].om_price_hourly * relax_gain * Eele
+
+    md["Cele_combustible"] = Cele_combustible = H2_price / mg.electrolyzer[1].consumption_slope * Eele;# $/y
+    md["Cele"] = Cele = mg.dispatchables.fuel_cell[1].investment_price * Pfc_rated_ann + 
+                        Cele_om + Cele_combustible # $/y
     # Battery costs
     md["Esto_rated_ann"] = @variable(model, Esto_rated_ann >= 0) # annualized size
     md["E_through_sto"] = E_through_sto = (sum(Psto_cha) + sum(Psto_dis))*dt * 365/ndays # cumulated throughput
@@ -278,7 +428,7 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any})
                           wind.om_price * power_rated_wind
 
     # Total cost
-    md["Cann"] = Cann = Cgen + Csto +  Cpv + Cwind
+    md["Cann"] = Cann = Cfc + Csto +  Cpv + Cwind - Cele
     md["LCOE"] = Cann/Eload_desired
 
     # Unregister all variables
@@ -302,10 +452,10 @@ Optional keyword parameters:
 - `shed_max`: load shedding upper bound, as a fraction of desired load energy, in [0,1] (default to 0.0)
 - `ndays`: time series reduction (default to 365: no data reducation)
 - `fixed_lifetimes`: true or false (default)
-- `gen_hours_assum`: assumed generator operation hours when `fixed_lifetimes` is `true`,
+- `fc_hours_assum`: assumed fuel_cell operation hours when `fixed_lifetimes` is `true`,
    in 0 – 8760 h/y (default 2000 h/y)
 - `relax_gain`: 1.0 by default. Increase to try to compensation the underestimation
-  of e.g. generator operating hours due to linearization.
+  of e.g. fuel_cell operating hours due to linearization.
 - `z_tan`: tangent points for Xann PWL approx, see `cons_Xann_usage!` function
 
 (all these parameters gets stored in the `model_data` output Dict)
@@ -320,33 +470,29 @@ function setup_optim_mg_jump(optimizer; create_mg_base,
         shed_max=0.0,
         ndays=365,
         fixed_lifetimes=false,
-        gen_hours_assum = 2000.,
+        fc_hours_assum = 2000.,
         relax_gain = 1.0,
         z_tan = [0.20, 0.28, 0.37, 0.50, 0.68, 1.0, 1.7, 4.0],
+        H2_price,
     )
 
-    # base Microgrid with 1kW(h) ratings
-    mg = create_microgrid([1., 1., 1., 1.]; create_mg_base)
+    mg = create_microgrid([1., 1., 1., 1., 1., 1., 1., 1.]; create_mg_base)
 
     model_data = Dict{String,Any}()
 
-    # JuMP model setup
     model = Model(optimizer)
     set_silent(model)
     model_data["model"] = model
 
-    # Store model parameters in the Dict:
     model_data["shed_max"] = shed_max
     model_data["ndays"] = ndays
     model_data["fixed_lifetimes"] = fixed_lifetimes
-    model_data["gen_hours_assum"] = gen_hours_assum
+    model_data["fc_hours_assum"] = fc_hours_assum
     model_data["relax_gain"] = relax_gain
     model_data["z_tan"] = z_tan
 
-    # Populate the model
-    build_optim_mg_stage!(mg, model_data)
+    build_optim_mg_stage!(mg, model_data, H2_price)
 
-    # Set optimization objective
     @objective(model, Min, model_data["Cann"])
 
     return mg, model_data
@@ -354,7 +500,7 @@ end
 
 """Diagnostics about microgrid optimization with JuMP
 
-About operation stats and economic performance, for generator and storage.
+About operation stats and economic performance, for fuel_cell and storage.
 e.g. lifetime and CRF (including the effect of annualized sized pwl approximation),
 
 Returns a hierarchical NamedTuple
@@ -365,40 +511,34 @@ function diagnostics_mg_jump(mg, model_data, ndays, relax_gain)
     Eload_desired = md["Eload_desired"]
     CRFproj(T) = CRF(mg.project.discount_rate, T)
     # Generator diagnostics
-    Pgen = value.(md["Pgen"])
-    Egen = value(md["Egen"])
-    power_rated_gen = value(md["power_rated_gen"])
+    Pfc = value.(md["Pfc"])
+    Efc = value(md["Efc"])
+    power_rated_fc = value(md["power_rated_fc"])
     # operation hours/y
-    gen_hours = sum(Pgen .> 1e-6*power_rated_gen)*dt*365/ndays
-    gen_hours_lin = relax_gain*Egen/power_rated_gen
-    gen_lifetime = mg.generator.lifetime_hours / gen_hours
-    gen_lifetime_hlin = mg.generator.lifetime_hours / gen_hours_lin
-    if "Ugen" in keys(md)
-        @assert isapprox(gen_lifetime_hlin, power_rated_gen/value(md["Ugen"]); rtol=1e-8)
-    end
+    fc_hours = sum(Pfc .> 1e-6*power_rated_fc)*dt*365/ndays
+    fc_hours_lin = relax_gain*Efc/power_rated_fc
+    fc_lifetime = mg.dispatchables.fuel_cell[1].lifetime_hours / fc_hours
+    fc_lifetime_hlin = mg.dispatchables.fuel_cell[1].lifetime_hours / fc_hours_lin
     # Storage diagnostics
     energy_rated_sto = value(md["energy_rated_sto"])
     E_through_sto = value(md["E_through_sto"])
     sto_cycles = value(E_through_sto/(2*energy_rated_sto)) # c/year
     sto_lifetime_cycles = mg.storage.lifetime_cycles / sto_cycles
-    if "Usto" in keys(md)
-        @assert isapprox(sto_lifetime_cycles, energy_rated_sto/value(md["Usto"]); rtol=1e-8)
-    end
     sto_lifetime = min(sto_lifetime_cycles, mg.storage.lifetime_calendar)
 
     diagnostics = (
-        generator = (
-            cost_share = value(md["Cgen"]/md["Cann"]),
-            cost_share_fuel = value(md["Cgen_fuel"]/md["Cann"]),
-            energy = Egen,
-            load_share = Egen/Eload_desired,
-            hours = gen_hours,
-            hours_lin = gen_hours_lin,
-            lifetime = gen_lifetime,
-            lifetime_hlin = gen_lifetime_hlin,
-            CRF = CRFproj(gen_lifetime),
-            CRF_hlin = CRFproj(gen_lifetime_hlin),
-            CRF_hlin_pwl = value(md["Pgen_rated_ann"] / power_rated_gen)
+        fuel_cell = (
+            cost_share = value(md["Cfc"]/md["Cann"]),
+            cost_share_fuel = value(md["Cfc_combustible"]/md["Cann"]),
+            energy = Efc,
+            load_share = Efc/Eload_desired,
+            hours = fc_hours,
+            hours_lin = fc_hours_lin,
+            lifetime = fc_lifetime,
+            lifetime_hlin = fc_lifetime_hlin,
+            CRF = CRFproj(fc_lifetime),
+            CRF_hlin = CRFproj(fc_lifetime_hlin),
+            CRF_hlin_pwl = value(md["Pfc_rated_ann"] / power_rated_fc)
         ),
         storage = (
             cost_share = value(md["Csto"]/md["Cann"]),
@@ -437,16 +577,17 @@ function optim_mg_jump(optimizer; create_mg_base,
         shed_max=0.0,
         ndays=365,
         fixed_lifetimes=false,
-        gen_hours_assum = 2000.,
+        fc_hours_assum = 2000.,
         relax_gain = 1.0,
         z_tan = [0.20, 0.28, 0.37, 0.50, 0.68, 1.0, 1.7, 4.0],
-        model_custom=nothing
+        model_custom=nothing,
+        H2_price = 0.0
     )
 
     # Setup optimization model
     mg, model_data = setup_optim_mg_jump(optimizer;
-        shed_max, ndays, fixed_lifetimes, gen_hours_assum, relax_gain, z_tan,
-        create_mg_base
+        shed_max, ndays, fixed_lifetimes, fc_hours_assum, relax_gain, z_tan,
+        create_mg_base, H2_price
     )
     md = model_data
     model = md["model"]
@@ -463,25 +604,27 @@ function optim_mg_jump(optimizer; create_mg_base,
     # Extract results
     LCOE_opt = value(LCOE)
     xopt = value.([
-        md["power_rated_gen"]
+        md["power_rated_fc"]
+        md["power_rated_ele"]
         md["energy_rated_sto"]
         md["power_rated_pv"]
         md["power_rated_wind"]
     ])
 
-    # Paste back sizing in Microgrid project description
-    mg.generator.power_rated = value(md["power_rated_gen"])
-    mg.storage.energy_rated = value(md["energy_rated_sto"])
-    mg.nondispatchables[1].power_rated = value(md["power_rated_pv"])
-    mg.nondispatchables[2].power_rated = value(md["power_rated_wind"])
-
     diagnostics = diagnostics_mg_jump(mg, model_data, ndays, relax_gain)
 
+    K = length(md["Pnl"])
     traj = (
-        Pgen = value.(md["Pgen"]),
+        Pfc = value.(md["Pfc"]),
+        Pgen = zeros(K),
+        Pele = value.(md["Pele"]),
+        Phb   = zeros(K),
         Psto = value.(md["Psto_dis"] - md["Psto_cha"]),
         Esto = value.(md["Esto"]),
-        Pshed = value.(md["Pshed"])
+        LoH   = zeros(K),
+        LoF   = zeros(K),
+        Pcurt = value.(md["Pspill"]),
+        Pdump = zeros(K)
     )
     return xopt, LCOE_opt, diagnostics, traj, md, mg
 end
@@ -492,30 +635,117 @@ end
 simulate solution of Algebraic model (stored as JuMP variables in `model_data`)
 using Microgrids's  simulator.
 
-To get comparable results, `smoothing=Smoothing(transition=1.0, gain=relax_gain)`
-should be used.
+Discontinuous statistics can optionally be relaxed (smoothed)
+using the relaxation parameter `ε`:
+- 0.0 means no relaxation (default value)
+- 1.0 yields the strongest relaxation
+
+Using relaxation (`ε` > 0) is recommended when using gradient-based optimization
+and then a “small enough” value between 0.05 and 0.30 is suggested.
 
 This replicates `Microgrids.simulate`, except that the `operation` step is bypassed.
 """
-function simulate_alg(mg::Microgrid, md, smoothing::Smoothing=NoSmoothing)
-    # Collect microgrid operation trajectories
-    Pnl = value.(md["Pnl"])
+function simulate_alg(mg::Microgrid, md, ε::Real=0.0)
+
+    Pnl   = value.(md["Pnl"])
     Pshed = value.(md["Pshed"])
-    renew_potential = value.(md["renew_potential"])
-    Pgen = value.(md["Pgen"])
+    Prenew = value.(md["renew_potential"])
+    Pgen = zeros(length(Pnl))
+    Pfc   = value.(md["Pfc"])
+    Pele = value.(md["Pele"])
+    Phb   = zeros(length(Pnl))
     Esto = value.(md["Esto"])
-    Psto = value.(md["Psto_dis"] - md["Psto_cha"])
-    Pspill = value.(md["Pspill"])
-    Psto_dmax = zero(Psto)
-    Psto_cmax = zero(Psto)
+    Psto = value.(md["Psto_dis"] .- md["Psto_cha"])
+    LoH   = zeros(length(Pnl))
+    LoF   = zeros(length(Pnl))
+    Pcurt = value.(md["Pspill"])
+    Pdump = zeros(length(Pnl))
 
-    oper_traj = OperationTraj(Pnl, Pshed, renew_potential, Pgen, Esto, Psto, Psto_dmax, Psto_cmax, Pspill)
+    oper_traj = OperationTraj(Pnl, Pshed, Prenew, Pgen, Pfc, Pele,
+    Phb, Esto, Psto, LoH, LoF, Pcurt, Pdump
+    )
 
-    # Aggregate the operation variables
-    oper_stats = aggregation(mg, oper_traj, smoothing)
-
-    # Eval the microgrid costs
+    oper_stats = aggregation(mg, oper_traj, ε)
     mg_costs = economics(mg, oper_stats)
 
     return (traj=oper_traj, stats=oper_stats, costs=mg_costs)
 end
+
+function Q_hydro_overtime(mg::Microgrid, md ,investment_price_hytank::Real=0.0, td::Vector{Float64} = zeros(365*24))
+    #Variables needed
+    Pele = value.(md["Pele"])
+    cons_rate_elyz = mg.electrolyzer[1].consumption_slope
+    Pfc   = value.(md["Pfc"])
+    cons_rate_fc = mg.dispatchables.fuel_cell[1].consumption_slope
+    dt = td[2] - td[1]
+    K = length(td)
+
+    Q = cumsum(((Pele[1:K] ./ cons_rate_elyz) .- (Pfc[1:K] .* cons_rate_fc)) .* dt)
+    range_Q = maximum(Q) - minimum(Q)
+    cost_Q = range_Q * investment_price_hytank * CRF(mg.project.discount_rate, mg.storage.lifetime_calendar)
+    return (Q, range_Q, cost_Q)
+end
+
+function plot_oper_traj(td, Pload, Pele, Pfc, Pren, Ebatt, price)
+    fig, (ax1, ax2, ax3) = plt.subplots(3,1, figsize=(5,3), sharex=true)
+    ax1.plot(td, Pload, label="load")
+    ax1.plot(td, Pele, label = "ele")
+    ax1.plot(td, Pfc, "tab:red", label="fc")
+    ax1.plot(td, Pren, "tab:green", label="renew")
+    ax2.plot(td, Ebatt[1:end-1], "C2", label="Esto")
+    
+    ax1.legend(ncols=4)
+    ax1.grid(true)
+    ax1.set(
+        ylabel="kW"
+    )
+    ax2.grid(true)
+    ax2.legend()
+    ax2.set(
+        ylabel="kWh"
+    )
+
+    ax3.plot(td, price, color="tab:brown", label="price")
+    ax3.grid(true)
+    ax3.legend()
+    ax3.set(
+        xlabel="time (d)",
+        ylabel="\$/kWh"
+    )
+    
+    fig.tight_layout()
+    return fig, (ax1, ax2, ax3)
+end
+
+function Dim_max(Pload_max)
+    power_rated_gen_max = 0
+    power_rated_fc_max = 1.2 * Pload_max
+    power_rated_ele_max = 1.2* Pload_max
+    power_rated_hb_max = 0
+    energy_rated_sto_max = 10.0 * Pload_max
+    capacity_max = 0
+    power_rated_pv_max = 1.0 * Pload_max
+    power_rated_wind_max = 5.0 * Pload_max;
+
+    Dmax = dict("power_rated_gen_max" => power_rated_gen_max,
+                "power_rated_fc_max" => power_rated_fc_max,
+                "power_rated_ele_max" => power_rated_ele_max,
+                "power_rated_hb_max" => power_rated_hb_max,
+                "energy_rated_sto_max" => energy_rated_sto_max,
+                "capacity_max" => capacity_max,
+                "power_rated_pv_max" => power_rated_pv_max,
+                "power_rated_wind_max" => power_rated_wind_max
+    )
+    return Dmax
+end
+
+function Study_H2_price(H2_price_range)
+    for i in H2_price_range
+        xopt, LCOE_opt, diagnostics, traj, md, mg = optim_mg_jump(optimizer, H2_price = i, create_mg_base = create_mg_base)
+    end
+    return xopt
+end
+
+
+H2_price_range = range(1, 20; step = 0.5)
+Study_H2_price(H2_price_range)
