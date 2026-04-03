@@ -6,8 +6,8 @@
 using Microgrids
 using JuMP
 using HiGHS
-
-include("C:/Users/FR00CSS0000000077985/Documents/Centrale_Supelec/Projet_recherche/Microgrids.JuMP/example/Microgrid_model_data.jl")
+using DataFrames
+include("example/Microgrid_model_data.jl")
 const tseries = load_microgrid_tseries()
 
 println("Microgrid optimization with JuMP common functions:")
@@ -246,7 +246,7 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any}, H2_p
     relax_gain = md["relax_gain"]
     z_tan = md["z_tan"]
 
-    println("Building stage problem with $ndays days...")
+    #println("Building stage problem with $ndays days...")
     dt = mg.project.timestep
     discount_rate = mg.project.discount_rate
     CRFproj(T) = CRF(mg.project.discount_rate, T)
@@ -335,10 +335,10 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any}, H2_p
     )
 
     if shed_max == 0.0
-        println("zero load shedding allowed")
+        #println("zero load shedding allowed")
         fix.(Pshed, 0.0; force=true);
     else
-        println("load shedding allowed: $shed_max")
+        #println("load shedding allowed: $shed_max")
         Eshed = sum(Pshed)*dt * 365/ndays
         @constraint(model, Eshed <= Eload_desired*shed_max)
     end
@@ -349,15 +349,15 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any}, H2_p
     md["Efc"] = Efc = sum(Pfc)*dt * 365/ndays # Generator yearly energy
 
     if fixed_lifetimes
-        print("Fixed fuel_cell lifetime hypothesis: ")
+        #print("Fixed fuel_cell lifetime hypothesis: ")
         fc_lifetime = mg.dispatchables.fuel_cell[1].lifetime_hours / fc_hours_assum # years
-        println("$fc_lifetime y, assuming $fc_hours_assum  h/y of usage")
+        #println("$fc_lifetime y, assuming $fc_hours_assum  h/y of usage")
         md["cons_Pfc_rated_ann_CRFfc_lifetime"] = @constraint(model,
             Pfc_rated_ann == power_rated_fc * CRFproj(fc_lifetime))
     else
-        println("Usage-dependent fuel_cell lifetime model (relax_gain=", relax_gain,")")
+        #println("Usage-dependent fuel_cell lifetime model (relax_gain=", relax_gain,")")
         md["Ufc"] = @variable(model, Ufc >= 0) # cumulated usage
-        println("Xann constraints with z_tan=$z_tan")
+        #println("Xann constraints with z_tan=$z_tan")
         @constraint(model, Ufc == Efc*relax_gain/mg.dispatchables.fuel_cell[1].lifetime_hours); # kW/y
         cpwl_fc = cons_Xann_usage!(model,
             Pfc_rated_ann, power_rated_fc, Ufc,
@@ -371,22 +371,23 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any}, H2_p
 
     md["Cfc_combustible"] = Cfc_combustible = H2_price * mg.dispatchables.fuel_cell[1].consumption_slope * Efc;# $/y
     md["Cfc"] = Cfc = mg.dispatchables.fuel_cell[1].investment_price * Pfc_rated_ann +
-                        Cfc_om + Cfc_combustible # $/y
+                        Cfc_om + 
+                        Cfc_combustible # $/y
 
     # Electroolyzer costs
     md["Pele_rated_ann"] = @variable(model, Pele_rated_ann >= 0) # annualized size
     md["Eele"] = Eele = sum(Pele)*dt * 365/ndays # Generator yearly energy
 
     if fixed_lifetimes
-        print("Fixed electrolyzer lifetime hypothesis: ")
+        #print("Fixed electrolyzer lifetime hypothesis: ")
         ele_lifetime = mg.electrolyzer[1].lifetime_hours / ele_hours_assum # years
-        println("$ele_lifetime y, assuming $ele_hours_assum  h/y of usage")
+        #println("$ele_lifetime y, assuming $ele_hours_assum  h/y of usage")
         md["cons_Pele_rated_ann_CRFele_lifetime"] = @constraint(model,
             Pele_rated_ann == power_rated_ele * CRFproj(ele_lifetime))
     else
-        println("Usage-dependent electrolyzer lifetime model (relax_gain=", relax_gain,")")
+        #println("Usage-dependent electrolyzer lifetime model (relax_gain=", relax_gain,")")
         md["Uele"] = @variable(model, Uele >= 0) # cumulated usage
-        println("Xann constraints with z_tan=$z_tan")
+        #println("Xann constraints with z_tan=$z_tan")
         @constraint(model, Uele == Eele*relax_gain/mg.electrolyzer[1].lifetime_hours); # kW/y
         cpwl_ele = cons_Xann_usage!(model,
             Pele_rated_ann, power_rated_ele, Uele,
@@ -399,8 +400,9 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any}, H2_p
         mg.electrolyzer[1].om_price_hourly * relax_gain * Eele
 
     md["Cele_combustible"] = Cele_combustible = H2_price / mg.electrolyzer[1].consumption_slope * Eele;# $/y
-    md["Cele"] = Cele = mg.dispatchables.fuel_cell[1].investment_price * Pfc_rated_ann + 
-                        Cele_om + Cele_combustible # $/y
+    md["Cele"] = Cele = mg.electrolyzer[1].investment_price * Pele_rated_ann + 
+                        Cele_om + 
+                        Cele_combustible # $/y
     # Battery costs
     md["Esto_rated_ann"] = @variable(model, Esto_rated_ann >= 0) # annualized size
     md["E_through_sto"] = E_through_sto = (sum(Psto_cha) + sum(Psto_dis))*dt * 365/ndays # cumulated throughput
@@ -686,66 +688,18 @@ function Q_hydro_overtime(mg::Microgrid, md ,investment_price_hytank::Real=0.0, 
     return (Q, range_Q, cost_Q)
 end
 
-function plot_oper_traj(td, Pload, Pele, Pfc, Pren, Ebatt, price)
-    fig, (ax1, ax2, ax3) = plt.subplots(3,1, figsize=(5,3), sharex=true)
-    ax1.plot(td, Pload, label="load")
-    ax1.plot(td, Pele, label = "ele")
-    ax1.plot(td, Pfc, "tab:red", label="fc")
-    ax1.plot(td, Pren, "tab:green", label="renew")
-    ax2.plot(td, Ebatt[1:end-1], "C2", label="Esto")
-    
-    ax1.legend(ncols=4)
-    ax1.grid(true)
-    ax1.set(
-        ylabel="kW"
-    )
-    ax2.grid(true)
-    ax2.legend()
-    ax2.set(
-        ylabel="kWh"
-    )
 
-    ax3.plot(td, price, color="tab:brown", label="price")
-    ax3.grid(true)
-    ax3.legend()
-    ax3.set(
-        xlabel="time (d)",
-        ylabel="\$/kWh"
-    )
-    
-    fig.tight_layout()
-    return fig, (ax1, ax2, ax3)
+function Q_hydro_overtime(mg::Microgrid, md ,investment_price_hytank::Real=0.0, td::Vector{Float64} = zeros(365*24))
+    #Variables needed
+    Pele = value.(md["Pele"])
+    cons_rate_elyz = mg.electrolyzer[1].consumption_slope
+    Pfc   = value.(md["Pfc"])
+    cons_rate_fc = mg.dispatchables.fuel_cell[1].consumption_slope
+    dt = td[2] - td[1]
+    K = length(td)
+
+    Q = cumsum(((Pele[1:K] ./ cons_rate_elyz) .- (Pfc[1:K] .* cons_rate_fc)) .* dt)
+    range_Q = maximum(Q) - minimum(Q)
+    cost_Q = range_Q * investment_price_hytank * CRF(mg.project.discount_rate, mg.storage.lifetime_calendar)
+    return (Q, range_Q, cost_Q)
 end
-
-function Dim_max(Pload_max)
-    power_rated_gen_max = 0
-    power_rated_fc_max = 1.2 * Pload_max
-    power_rated_ele_max = 1.2* Pload_max
-    power_rated_hb_max = 0
-    energy_rated_sto_max = 10.0 * Pload_max
-    capacity_max = 0
-    power_rated_pv_max = 1.0 * Pload_max
-    power_rated_wind_max = 5.0 * Pload_max;
-
-    Dmax = dict("power_rated_gen_max" => power_rated_gen_max,
-                "power_rated_fc_max" => power_rated_fc_max,
-                "power_rated_ele_max" => power_rated_ele_max,
-                "power_rated_hb_max" => power_rated_hb_max,
-                "energy_rated_sto_max" => energy_rated_sto_max,
-                "capacity_max" => capacity_max,
-                "power_rated_pv_max" => power_rated_pv_max,
-                "power_rated_wind_max" => power_rated_wind_max
-    )
-    return Dmax
-end
-
-function Study_H2_price(H2_price_range)
-    for i in H2_price_range
-        xopt, LCOE_opt, diagnostics, traj, md, mg = optim_mg_jump(optimizer, H2_price = i, create_mg_base = create_mg_base)
-    end
-    return xopt
-end
-
-
-H2_price_range = range(1, 20; step = 0.5)
-Study_H2_price(H2_price_range)
