@@ -49,11 +49,19 @@ function dataframe_H2(LCOE_H2_price, H2_price_range)
     return df_H2
 end
  
-function export_to_csv(df::DataFrame, filename::String="result.csv")
+using CSV
+
+using CSV
+
+function export_to_csv(df::DataFrame; prefix="LCOE_for_H2_price")
+    h2_min = minimum(df.H2_price)
+    h2_max = maximum(df.H2_price)
+    filename = "$(prefix)_$(h2_min)_to_$(h2_max).csv"
+
     CSV.write(filename, df)
     return nothing
 end
 
 
-H2_price_range = range(1, 20; step = 1)
+H2_price_range = range(0, 15; step = 0.1)
 export_to_csv(dataframe_H2(Study_H2_price(H2_price_range), H2_price_range))
