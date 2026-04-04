@@ -401,7 +401,7 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any}, H2_p
 
     md["Cele_combustible"] = Cele_combustible = H2_price / mg.electrolyzer[1].consumption_slope * Eele;# $/y
     md["Cele"] = Cele = mg.electrolyzer[1].investment_price * Pele_rated_ann + 
-                        Cele_om + 
+                        Cele_om - 
                         Cele_combustible # $/y
     # Battery costs
     md["Esto_rated_ann"] = @variable(model, Esto_rated_ann >= 0) # annualized size
@@ -430,7 +430,7 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any}, H2_p
                           wind.om_price * power_rated_wind
 
     # Total cost
-    md["Cann"] = Cann = Cfc + Csto +  Cpv + Cwind - Cele
+    md["Cann"] = Cann = Cfc + Csto +  Cpv + Cwind + Cele
     md["LCOE"] = Cann/Eload_desired
 
     # Unregister all variables
@@ -688,18 +688,3 @@ function Q_hydro_overtime(mg::Microgrid, md ,investment_price_hytank::Real=0.0, 
     return (Q, range_Q, cost_Q)
 end
 
-
-function Q_hydro_overtime(mg::Microgrid, md ,investment_price_hytank::Real=0.0, td::Vector{Float64} = zeros(365*24))
-    #Variables needed
-    Pele = value.(md["Pele"])
-    cons_rate_elyz = mg.electrolyzer[1].consumption_slope
-    Pfc   = value.(md["Pfc"])
-    cons_rate_fc = mg.dispatchables.fuel_cell[1].consumption_slope
-    dt = td[2] - td[1]
-    K = length(td)
-
-    Q = cumsum(((Pele[1:K] ./ cons_rate_elyz) .- (Pfc[1:K] .* cons_rate_fc)) .* dt)
-    range_Q = maximum(Q) - minimum(Q)
-    cost_Q = range_Q * investment_price_hytank * CRF(mg.project.discount_rate, mg.storage.lifetime_calendar)
-    return (Q, range_Q, cost_Q)
-end
