@@ -677,11 +677,13 @@ function Q_hydro_overtime(mg::Microgrid, md, td::Vector{Float64} = zeros(365*24)
     cons_rate_fc = mg.dispatchables.fuel_cell[1].consumption_slope
     dt = td[2] - td[1]
     K = length(td)
+    hytank= mg.tanks.h2Tank
 
     Q = cumsum(((Pele[1:K] ./ cons_rate_elyz) .- (Pfc[1:K] .* cons_rate_fc)) .* dt)
     range_Q = maximum(Q) - minimum(Q)
-    Q_om_price = mg.tank[1].capacity * mg.tank[1].om_price
-    cost_Q = range_Q * mg.tank[1].investment_price * CRF(mg.project.discount_rate, mg.storage.lifetime_calendar) + Q_om_price
+    Q_om_price = hytank.capacity * hytank.om_price
+    cost_Q = range_Q * hytank.investment_price * CRF(mg.project.discount_rate, mg.storage.lifetime_calendar) + Q_om_price
+    cost_Q = cost_Q * 365 / length(td) * 24
     return (Q, range_Q, cost_Q)
 end
 
