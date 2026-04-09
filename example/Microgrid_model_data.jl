@@ -85,7 +85,16 @@ function create_mg_base()
     input_unit_fc= "Kg"
     output_unit_fc="KWh"
 
-
+    #hy tank
+    capacity_rated_hytank = 12000. # rated power capacity (kg)
+    investment_price_hytank = 400. # initial investment price  ($/kg)
+    hy_price = 14. # initial hydrogen price ($/kg)
+    om_price_hytank = 4. # operation and maintenance price ($/kg/y)
+    lifetime_hytank = 25. # calendar lifetime (y)
+    loss_factor_hytank = 0. # hydrogen used on site 
+    LoH_ini_ratio = 0.0 # Initial load ratio ∈ [0,1]
+    LoH_min_ratio = 0.0 # minimum load ratio ∈ [0,1]
+    LoH_max_ratio = 1. # maximum load ratio ∈ [0,1]
 
     #Haber Bosch numbers to update!!! they have been taken arbitrary
     power_rated_hb = 4000. # rated power capacity (KW)
@@ -242,6 +251,7 @@ function create_mg_base()
     )
 
     haber = ProductionUnit(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "", "")#no haber-bosh in our case
+    tank_hy = Tank(capacity_rated_hytank, investment_price_hytank, om_price_hytank,lifetime_hytank, loss_factor_hytank,LoH_ini_ratio, LoH_min_ratio, LoH_max_ratio, hy_price, 0.0, 0.0)
     tank_0 = Tank(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0) #infinite reservoir, so we don't need them
     gen = ProductionUnit(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "", "")#no generaator in our model
     mg = Microgrid(
@@ -250,7 +260,7 @@ function create_mg_base()
     DispatchableCompound([gen],[fuel_cell]),
     [electrolyzer],
     haber,
-    TankCompound(tank_0, tank_0),
+    TankCompound(tank_hy, tank_0),
     batt,
     [pv, windgen])
 

@@ -326,8 +326,6 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any}, H2_p
     )
     # Storage cyclicity
     @constraint(model, Esto[K+1] == Esto[1])
-    # not implemented: force initial SoC # TODO: activate to make it comparable with BB
-    #@constraint(model, Esto[1] == mg.storage.SoC_ini * energy_rated_sto)
 
     ## Power balance
     md["balance"] = @constraint(model, balance,
@@ -363,8 +361,6 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any}, H2_p
             Pfc_rated_ann, power_rated_fc, Ufc,
             discount_rate, z_tan)
     end
-    # question for O&M wit fixed lifetime: use assumed fixed fc hours ?
-    # or use the convexified hours (Efc*relax_gain) like for Ufc?
     md["Cfc_om"] = Cfc_om = fixed_lifetimes ?
         mg.dispatchables.fuel_cell[1].om_price_hourly * fc_hours_assum * power_rated_fc :
         mg.dispatchables.fuel_cell[1].om_price_hourly * relax_gain * Efc
@@ -673,7 +669,7 @@ function simulate_alg(mg::Microgrid, md, ε::Real=0.0)
     return (traj=oper_traj, stats=oper_stats, costs=mg_costs)
 end
 
-function Q_hydro_overtime(mg::Microgrid, md ,investment_price_hytank::Real=0.0, td::Vector{Float64} = zeros(365*24))
+function Q_hydro_overtime(mg::Microgrid, md, td::Vector{Float64} = zeros(365*24))
     #Variables needed
     Pele = value.(md["Pele"])
     cons_rate_elyz = mg.electrolyzer[1].consumption_slope
@@ -684,7 +680,8 @@ function Q_hydro_overtime(mg::Microgrid, md ,investment_price_hytank::Real=0.0, 
 
     Q = cumsum(((Pele[1:K] ./ cons_rate_elyz) .- (Pfc[1:K] .* cons_rate_fc)) .* dt)
     range_Q = maximum(Q) - minimum(Q)
-    cost_Q = range_Q * investment_price_hytank * CRF(mg.project.discount_rate, mg.storage.lifetime_calendar)
+    Q_om_price = mg.tank[1].capacity * mg.tank[1].om_price
+    cost_Q = range_Q * mg.tank[1].investment_price * CRF(mg.project.discount_rate, mg.storage.lifetime_calendar) + Q_om_price
     return (Q, range_Q, cost_Q)
 end
 

@@ -60,5 +60,5 @@ function export_to_csv(df::DataFrame; prefix="LCOE_for_H2_price")
 end
 
 
-H2_price_range = range(0, 15; step = 0.1)
+H2_price_range = range(0, 15; step = 1)
 export_to_csv(dataframe_H2(Study_H2_price(H2_price_range), H2_price_range))
