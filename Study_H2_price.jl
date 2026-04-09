@@ -2,6 +2,7 @@ using Microgrids
 using JuMP
 using HiGHS
 using DataFrames
+using CSV
 
 include("example/Microgrid_model_data.jl")
 include("Microgrid_JuMP_common.jl")
@@ -48,10 +49,6 @@ function dataframe_H2(LCOE_H2_price, H2_price_range)
 
     return df_H2
 end
- 
-using CSV
-
-using CSV
 
 function export_to_csv(df::DataFrame; prefix="LCOE_for_H2_price")
     h2_min = minimum(df.H2_price)
