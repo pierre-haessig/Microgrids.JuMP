@@ -97,6 +97,18 @@ function create_microgrid(x; create_mg_base=create_mg_base)
         mg.storage.salvage_price_ratio)
 
     tank_0 = Tank(0.0, 1.0, 1.0, Inf, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+    tank_hy = Tank(
+        mg.tanks.h2Tank.capacity, 
+        mg.tanks.h2Tank.investment_price, 
+        mg.tanks.h2Tank.om_price,
+        mg.tanks.h2Tank.lifetime, 
+        mg.tanks.h2Tank.loss_factor,
+        mg.tanks.h2Tank.ini_filling_ratio, 
+        mg.tanks.h2Tank.min_filling_ratio, 
+        mg.tanks.h2Tank.max_filling_ratio, 
+        mg.tanks.h2Tank.combustible_price, 
+        0.0, 
+        0.0)
 
     pv_new = Photovoltaic(x[4],
         irr_norm,
@@ -121,7 +133,7 @@ function create_microgrid(x; create_mg_base=create_mg_base)
         DispatchableCompound([fuel_cell_new, gen_new], [fuel_cell_new, gen_new]),
         [electrolyzer_new],
         haber,
-        TankCompound(tank_0, tank_0),
+        TankCompound(tank_hy, tank_hy),
         batt_new,
         [pv_new, windgen_new]
     )
@@ -624,7 +636,8 @@ function optim_mg_jump(optimizer; create_mg_base,
         Pcurt = value.(md["Pspill"]),
         Pdump = zeros(K)
     )
-    return xopt, LCOE_opt, diagnostics, traj, md, mg
+    status = termination_status(model)
+    return xopt, LCOE_opt, diagnostics, traj, md, mg, status
 end
 
 """
@@ -682,8 +695,9 @@ function Q_hydro_overtime(mg::Microgrid, md, td::Vector{Float64} = zeros(365*24)
     Q = cumsum(((Pele[1:K] ./ cons_rate_elyz) .- (Pfc[1:K] .* cons_rate_fc)) .* dt)
     range_Q = maximum(Q) - minimum(Q)
     Q_om_price = hytank.capacity * hytank.om_price
-    cost_Q = range_Q * hytank.investment_price * CRF(mg.project.discount_rate, mg.storage.lifetime_calendar) + Q_om_price
-    cost_Q = cost_Q * 365 / length(td) * 24
+
+    cost_Q = range_Q * hytank.investment_price * CRF(mg.project.discount_rate,hytank.lifetime) + Q_om_price
+    println(hytank.lifetime)
+    #println(CRF(mg.project.discount_rate,hytank.lifetime))
     return (Q, range_Q, cost_Q)
 end
-

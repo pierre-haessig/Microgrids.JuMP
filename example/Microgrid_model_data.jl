@@ -260,7 +260,7 @@ function create_mg_base()
     DispatchableCompound([gen],[fuel_cell]),
     [electrolyzer],
     haber,
-    TankCompound(tank_hy, tank_0),
+    TankCompound(tank_hy, tank_hy),
     batt,
     [pv, windgen])
 
