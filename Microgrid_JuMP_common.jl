@@ -23,9 +23,9 @@ println("- simulate_alg")
 println("- Q_hydro_overtime")
 
 optimizer = HiGHS.Optimizer
-mg = create_mg_base()
+"""mg = create_mg_base()"""
 
-Pload_max = maximum(tseries.Pload) # kW
+"""Pload_max = maximum(tseries.Pload) # kW
 Pload = tseries.Pload
 power_rated_gen_max = 0
 power_rated_fc_max = 1.2 * Pload_max
@@ -34,7 +34,7 @@ power_rated_hb_max = 0
 energy_rated_sto_max = 10.0 * Pload_max
 capacity_max = 0
 power_rated_pv_max = 1.0 * Pload_max
-power_rated_wind_max = 5.0 * Pload_max
+power_rated_wind_max = 5.0 * Pload_max"""
 
 
 function create_microgrid(x; create_mg_base=create_mg_base)
@@ -697,7 +697,7 @@ function Q_hydro_overtime(mg::Microgrid, md, td::Vector{Float64} = zeros(365*24)
     Q_om_price = hytank.capacity * hytank.om_price
 
     cost_Q = range_Q * hytank.investment_price * CRF(mg.project.discount_rate,hytank.lifetime) + Q_om_price
-    println(hytank.lifetime)
+    #println(hytank.lifetime)
     #println(CRF(mg.project.discount_rate,hytank.lifetime))
     return (Q, range_Q, cost_Q)
 end

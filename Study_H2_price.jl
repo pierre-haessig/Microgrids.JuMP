@@ -94,12 +94,12 @@ end
 function export_to_csv(df::DataFrame; prefix="result_for_H2_price")
     h2_min = minimum(df.H2_price)
     h2_max = maximum(df.H2_price)
-    filename = "$(prefix)_$(h2_min)_to_$(h2_max).csv"
+    filename = "plots/CSV_results/$(prefix)_$(h2_min)_to_$(h2_max).csv"
     CSV.write(filename, df)
     return filename
 end
 
-H2_price_range = 0:1:10
+H2_price_range = 30:1:31
 results = Study_H2_price(H2_price_range)
 df_H2, df_Q = dataframe_result(results, H2_price_range)
 
