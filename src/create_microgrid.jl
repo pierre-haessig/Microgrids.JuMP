@@ -1,16 +1,15 @@
+using JuMP
+using HiGHS
+using Microgrids
+include("../data/Microgrid_model_data.jl")
+include("economics.jl")
+include("simulate.jl")
+
+
+
+
 optimizer = HiGHS.Optimizer
 """mg = create_mg_base()"""
-
-"""Pload_max = maximum(tseries.Pload) # kW
-Pload = tseries.Pload
-power_rated_gen_max = 0
-power_rated_fc_max = 1.2 * Pload_max
-power_rated_ele_max = 1.2* Pload_max
-power_rated_hb_max = 0
-energy_rated_sto_max = 10.0 * Pload_max
-capacity_max = 0
-power_rated_pv_max = 1.0 * Pload_max
-power_rated_wind_max = 5.0 * Pload_max"""
 
 
 function create_microgrid(x; create_mg_base=create_mg_base)

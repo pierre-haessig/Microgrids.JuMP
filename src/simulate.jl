@@ -2,6 +2,26 @@
 using Microgrids
 
 
+"""reduce the year time series `x` to `ndays` ≤ 365
+sr=24: data sampling rate / day. 24 means hourly time step.
+
+The method is *basic*:
+it samples `ndays` days evenly spaced by (365 ÷ `ndays`) days
+
+with ndays=365, returns the original series
+"""
+function ts_reduction(x, ndays, sr=24)
+    out = zeros(ndays*sr)
+    @assert ndays<=365
+    Δdays = 365 ÷ ndays
+    for i in 1:ndays
+        offset_in = (i-1)*Δdays*sr
+        offset_out = (i-1)*sr
+        out[offset_out+1:offset_out+sr] = x[offset_in+1:offset_in+sr]
+    end
+    return out
+end
+
 """
     simulate_alg(mg::Microgrid, md, smoothing::Smoothing=NoSmoothing)
 
@@ -29,7 +49,7 @@ function simulate_alg(mg::Microgrid, md, ε::Real=0.0)
     Phb   = zeros(length(Pnl))
     Esto = value.(md["Esto"])
     Psto = value.(md["Psto_dis"] .- md["Psto_cha"])
-    LoH   = zeros(length(Pnl))
+    LoH   = value.(md["LoH"])
     LoF   = zeros(length(Pnl))
     Pcurt = value.(md["Pspill"])
     Pdump = zeros(length(Pnl))

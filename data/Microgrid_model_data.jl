@@ -9,7 +9,6 @@
 using Microgrids # for capacity_from_wind
 using CSV, DataFrames
 
-println("Base Wind-Solar Microgrid project definition functions...")
 
 """
 load a 1 year times series for microgrid project from `Ouessant_data_2016.csv` table:
@@ -22,7 +21,7 @@ should be called as `const tseries = load_microgrid_tseries()`
 """
 function load_microgrid_tseries()
     ### Input time series
-    fname = "data/Ouessant_data_2016.csv"
+    fname = "Ouessant_data_2016.csv"
     println("loading times series from $fname...")
     data = DataFrame(CSV.File("$(@__DIR__)/$fname"))
     
