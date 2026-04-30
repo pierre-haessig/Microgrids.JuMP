@@ -62,19 +62,19 @@ function build_optim_mg_stage!(mg::Microgrid, model_data::Dict{String,Any}, H2_p
 
     model = md["model"]
 
-    md["power_rated_fc"]  = @variable(model, 0 <= power_rated_fc <= power_rated_fc_max)
-    md["power_rated_ele"] = @variable(model, 0 <= power_rated_ele <= power_rated_ele_max)
-    md["energy_rated_sto"] = @variable(model, 0 <= energy_rated_sto <= energy_rated_sto_max)
+    md["power_rated_fc"]  = @variable(model, 0 <= power_rated_fc)
+    md["power_rated_ele"] = @variable(model, 0 <= power_rated_ele)
+    md["energy_rated_sto"] = @variable(model, 0 <= energy_rated_sto)
 
    if infinite_storage
-        Ctank = H2_sto_max
+        Ctank = 0.0
     else
-        Ctank = @variable(model, 0 <= Ctank <= H2_sto_max)
+        Ctank = @variable(model, 0 <= Ctank)
         md["Ctank"] = Ctank
     end
 
-    md["power_rated_pv"]   = @variable(model, 0 <= power_rated_pv <= power_rated_pv_max)
-    md["power_rated_wind"] = @variable(model, 0 <= power_rated_wind <= power_rated_wind_max)
+    md["power_rated_pv"]   = @variable(model, 0 <= power_rated_pv)
+    md["power_rated_wind"] = @variable(model, 0 <= power_rated_wind)
 
     md["pv_potential"] = @variable(model, pv_potential[1:K])
     @constraint(model, pv_potential .== power_rated_pv*cf_pv)
@@ -390,7 +390,7 @@ function optim_mg_jump(optimizer; create_mg_base,
 
     # Extract results
     LCOE_opt = value(LCOE)
-    Ctank = infinite_storage ? H2_sto_max : value(md["Ctank"])
+    Ctank = infinite_storage ? 0.0 : value(md["Ctank"])
     xopt = value.([
         md["power_rated_fc"]
         md["power_rated_ele"]
@@ -411,6 +411,7 @@ function optim_mg_jump(optimizer; create_mg_base,
         Psto = value.(md["Psto_dis"] - md["Psto_cha"]),
         Esto = value.(md["Esto"]),
         Ctank = Ctank,
+        LoH = zeros(K),
         LoF   = zeros(K),
         Pcurt = value.(md["Pspill"]),
         Pdump = zeros(K)

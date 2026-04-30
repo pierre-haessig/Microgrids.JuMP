@@ -1,6 +1,6 @@
 
 using Microgrids
-
+using Plots
 
 """reduce the year time series `x` to `ndays` ≤ 365
 sr=24: data sampling rate / day. 24 means hourly time step.
@@ -49,7 +49,11 @@ function simulate_alg(mg::Microgrid, md, ε::Real=0.0)
     Phb   = zeros(length(Pnl))
     Esto = value.(md["Esto"])
     Psto = value.(md["Psto_dis"] .- md["Psto_cha"])
-    LoH   = value.(md["LoH"])
+    if haskey(md, "LoH")
+        LoH = value.(md["LoH"])
+    else
+        LoH = zeros(length(Pnl))
+    end
     LoF   = zeros(length(Pnl))
     Pcurt = value.(md["Pspill"])
     Pdump = zeros(length(Pnl))
@@ -62,4 +66,29 @@ function simulate_alg(mg::Microgrid, md, ε::Real=0.0)
     mg_costs = economics(mg, oper_stats)
 
     return (traj=oper_traj, stats=oper_stats, costs=mg_costs)
+end
+
+function plot_oper_traj(td::Vector{Float64}, Pload::Vector{Float64}, Pele::Vector{Float64}, Pfc::Vector{Float64}, Pren::Vector{Float64}, Ebatt::Vector{Float64};
+                        xlim = nothing, ylim = nothing)
+
+    fig1 = plot(td, Pload, label="load", grid=true)
+    plot!(fig1, td, Pele, label="ele")
+    plot!(fig1, td, Pfc, label="fc", color=:red)
+    plot!(fig1, td, Pren, label="renew", color=:green)
+    ylabel!(fig1, "kW")
+
+    fig2 = plot(td, Ebatt[1:end-1], label="Esto", color=:green, grid=true)
+    ylabel!(fig2, "kWh")
+
+    fig = plot(fig1, fig2, layout=(2,1), sharex=true, size=(1200,600))
+
+    if xlim !== nothing
+        xlims!(fig, xlim)
+    end
+
+    if ylim !== nothing
+        ylims!(fig, ylim)
+    end
+
+    return fig
 end

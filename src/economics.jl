@@ -91,7 +91,5 @@ function Q_hydro_overtime(mg::Microgrid, md, td::Vector{Float64} = zeros(365*24)
     Q_om_price = hytank.capacity * hytank.om_price
 
     cost_Q = range_Q * hytank.investment_price * CRF(mg.project.discount_rate,hytank.lifetime) + Q_om_price
-    #println(hytank.lifetime)
-    #println(CRF(mg.project.discount_rate,hytank.lifetime))
     return (Q, range_Q, cost_Q)
 end
