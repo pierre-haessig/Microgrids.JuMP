@@ -3,6 +3,9 @@ using JuMP
 using HiGHS
 using DataFrames
 using CSV
+using Base.Threads
+
+Threads.nthreads() #print number of threads used
 
 include("../data/Microgrid_model_data.jl")
 include("economics.jl")
@@ -39,49 +42,44 @@ end
 
 function Study(H2_price_range = [], infinite_storage::Bool = false)
 
-    LCOE_array = Float64[]
-    x_array = Vector{Any}()
-    status_array = Vector{MOI.TerminationStatusCode}()
-    md_array = Vector{Any}()
-    mg_array = Vector{Any}()
+    N = length(H2_price_range)
+
+    LCOE_array = Vector{Float64}(undef, N)
+    x_array = Vector{Any}(undef, N)
+    status_array = Vector{MOI.TerminationStatusCode}(undef, N)
+    md_array = Vector{Any}(undef, N)
+    mg_array = Vector{Any}(undef, N)
 
     if infinite_storage
-        real_LCOE_array = Float64[]
-        Q_array = Vector{Vector{Float64}}()
-        cost_Q_array = Float64[]
-        range_Q_array = Float64[]
+        real_LCOE_array = Vector{Float64}(undef, N)
+        Q_array = Vector{Vector{Float64}}(undef, N)
+        cost_Q_array = Vector{Float64}(undef, N)
+        range_Q_array = Vector{Float64}(undef, N)
+
         K = 365 * 24
         td = collect((0:K-1) / 24)
 
-        for i in H2_price_range
+        Threads.@threads for idx in eachindex(H2_price_range)
+            i = H2_price_range[idx]
+
             xopt, status, Q, cost_Q, range_Q, LCOE, real_LCOE, md_opt, mg_opt =
                 LCOE_model(i, td, true)
-            ok = status == OPTIMAL
-            push!(LCOE_array, LCOE)
-            push!(real_LCOE_array, real_LCOE)
-            push!(x_array, xopt)
-            push!(status_array, status)
-            push!(Q_array, Q)
-            push!(cost_Q_array, cost_Q)
-            push!(range_Q_array, range_Q)
-            push!(md_array, md_opt)
-            push!(mg_array, mg_opt)
+
+            LCOE_array[idx] = LCOE
+            real_LCOE_array[idx] = real_LCOE
+            x_array[idx] = xopt
+            status_array[idx] = status
+            Q_array[idx] = Q
+            cost_Q_array[idx] = cost_Q
+            range_Q_array[idx] = range_Q
+            md_array[idx] = md_opt
+            mg_array[idx] = mg_opt
         end
 
-        return x_array, status_array, Q_array, cost_Q_array, range_Q_array, real_LCOE_array, LCOE_array, md_array, mg_array
+        return x_array, status_array, Q_array, cost_Q_array,
+               range_Q_array, real_LCOE_array, LCOE_array,
+               md_array, mg_array
     end
-
-    # single run (H2_price irrelevant)
-    xopt, status, LCOE, md_opt, mg_opt = LCOE_model(0, [], false)
-
-    push!(LCOE_array, LCOE)
-    push!(x_array, xopt)
-    push!(status_array, status)
-    push!(md_array, md_opt)
-    push!(mg_array, mg_opt)
-
-
-    return x_array, status_array, LCOE_array, md_array, mg_array
 end
 
 function dataframe_result(result, H2_price_range, infinite_storage::Bool = false)
